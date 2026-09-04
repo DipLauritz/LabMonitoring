@@ -1087,11 +1087,22 @@ class SensorMonitorApp:
         btn_frame = ttk.Frame(self.tab_settings)
         btn_frame.grid(row=common_row + 1, column=0, columnspan=2, pady=10)
         ttk.Button(btn_frame, text="Save Settings", command=self._save_settings).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Test Connection", command=self._test_database).pack(side=tk.LEFT, padx=5)
+        self.test_connection_button = ttk.Button(
+            btn_frame, text="Test Connection", command=self._test_database)
+        self.test_connection_button.pack(side=tk.LEFT, padx=5)
+        self._update_test_connection_button()
+
+    def _update_test_connection_button(self):
+        if not hasattr(self, "test_connection_button"):
+            return
+        backend = self.database_backend_var.get()
+        self.test_connection_button.configure(text=f"Test {backend} Connection")
 
     def _update_database_settings(self, event=None):
         for child in self.database_settings_frame.winfo_children():
             child.destroy()
+
+        self._update_test_connection_button()
 
         if self.database_backend_var.get().lower() == "mariadb":
             fields = [
@@ -1162,8 +1173,7 @@ class SensorMonitorApp:
     def _test_mariadb(self):
         try:
             settings = {key: var.get() for key, var in self.settings_vars.items()}
-            writer = MariaDBWriter(settings)
-            writer.close()
+            MariaDBWriter.check_connection(settings)
             self.log("MariaDB connection OK")
             messagebox.showinfo("Success", "Connected to MariaDB successfully!")
         except Exception as e:
