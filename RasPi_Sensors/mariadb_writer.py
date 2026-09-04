@@ -30,6 +30,30 @@ CREATE TABLE IF NOT EXISTS sensor_readings (
 class MariaDBWriter:
     """Create and write sensor readings to a MariaDB database."""
 
+    @staticmethod
+    def check_connection(settings):
+        """Open a MariaDB connection, run a harmless query, and close it."""
+        if mariadb is None:
+            raise RuntimeError(
+                "MariaDB support is not installed. "
+                "Install it with: pip install mariadb"
+            )
+
+        connection = mariadb.connect(
+            host=settings.get("mariadb_host", "127.0.0.1"),
+            port=int(settings.get("mariadb_port", 3306)),
+            user=settings.get("mariadb_user", ""),
+            password=settings.get("mariadb_password", ""),
+            database=settings.get("mariadb_database", "sensor_data"),
+        )
+        cursor = connection.cursor()
+        try:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+        finally:
+            cursor.close()
+            connection.close()
+
     def __init__(self, settings):
         if mariadb is None:
             raise RuntimeError(
