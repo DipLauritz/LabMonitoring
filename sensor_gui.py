@@ -704,6 +704,28 @@ def add_placeholder_sensors(new_names):
     return added
 
 
+def run_mariadb_diagnostics(settings):
+    """Check MariaDB connectivity and report whether readings are present."""
+    report = ["MariaDB diagnostics:"]
+    writer = None
+    try:
+        writer = MariaDBWriter(settings)
+        reading_count, latest_reading = writer.get_stream_status()
+        report.extend([
+            "  Connection and sensor_readings query: PASS",
+            f"  Stored readings: {reading_count}",
+            f"  Latest recorded_at: {latest_reading or 'no readings yet'}",
+        ])
+    except Exception as exc:
+        report.append(
+            f"  Connection/query: FAIL — {type(exc).__name__}: {exc}"
+        )
+    finally:
+        if writer is not None:
+            writer.close()
+    return report
+
+
 # ==============================================================================
 # MAIN GUI
 # ==============================================================================
@@ -1577,11 +1599,20 @@ class SensorMonitorApp:
         channels = {name: dict(cfg) for name, cfg in self.channels.items()}
         mux_address = self.mux_address
         hardware_busy = self.running
+        settings = dict(self.settings)
 
         def worker():
             try:
                 report = run_hardware_diagnostics(
                     channels, mux_address, hardware_busy=hardware_busy)
+                report.append("")
+                if settings.get(
+                        "database_backend", DEFAULT_DATABASE_BACKEND).lower() == "mariadb":
+                    report.extend(run_mariadb_diagnostics(settings))
+                else:
+                    report.append(
+                        "MariaDB diagnostics skipped: InfluxDB is the selected backend."
+                    )
             except Exception as exc:
                 report = [
                     f"Diagnostics failed unexpectedly: {type(exc).__name__}: {exc}",
@@ -1687,6 +1718,14 @@ class SensorMonitorApp:
             timestamp_ns = int(time.time() * 1e9)
             points = []
             mariadb_readings = []
+            enabled_count = sum(
+                1 for config in self.channels.values()
+                if config.get("enabled", False)
+            )
+            backend = self.settings.get(
+                "database_backend", DEFAULT_DATABASE_BACKEND
+            ).lower()
+            stream_status = ""
             csv_dir = self.settings.get("csv_backup_dir", os.path.expanduser("~/sensor_logs"))
             bucket = self.settings.get("influxdb_bucket", "sensor_data")
 
@@ -1752,26 +1791,62 @@ class SensorMonitorApp:
             if points and self.write_api:
                 try:
                     self.write_api.write(bucket=bucket, record=points)
+                    stream_status = f"InfluxDB wrote {len(points)} points"
                     self.root.after(0, self.log,
                                   f"[{now.strftime('%H:%M:%S')}] Wrote {len(points)} points to cloud + CSV")
                 except Exception as e:
+                    stream_status = f"InfluxDB write failed: {e}"
                     self.root.after(0, self.log,
                                   f"[{now.strftime('%H:%M:%S')}] Cloud write failed (CSV saved): {e}")
-            elif points and not self.mariadb_writer:
+            elif points:
+                if backend == "mariadb":
+                    stream_status = "MariaDB unavailable; readings saved to CSV only"
+                else:
+                    stream_status = "InfluxDB unavailable; readings saved to CSV only"
                 self.root.after(0, self.log,
                               f"[{now.strftime('%H:%M:%S')}] Wrote {len(points)} points to CSV only")
 
             if mariadb_readings and self.mariadb_writer:
                 try:
                     self.mariadb_writer.write_readings(mariadb_readings)
+                    stream_status = f"MariaDB wrote {len(mariadb_readings)} readings"
                     self.root.after(0, self.log,
                                   f"[{now.strftime('%H:%M:%S')}] Wrote {len(mariadb_readings)} readings to MariaDB")
                 except Exception as e:
+                    stream_status = f"MariaDB write failed: {e}"
                     self.root.after(0, self.log,
                                   f"[{now.strftime('%H:%M:%S')}] MariaDB write failed: {e}")
+            elif backend == "mariadb" and self.mariadb_writer:
+                stream_status = "MariaDB connected; no sensor readings acquired"
+            elif backend == "mariadb" and not self.mariadb_writer and not stream_status:
+                stream_status = "MariaDB unavailable; no database write attempted"
+
+            if self.debug_window is not None:
+                try:
+                    self.root.after(
+                        0,
+                        self._debug_collection_status,
+                        now,
+                        len(mariadb_readings),
+                        enabled_count,
+                        stream_status or "No database write attempted",
+                    )
+                except tk.TclError:
+                    pass
 
             interval = self.interval_var.get() if self.interval_var.get() > 0 else 2.0
             time.sleep(interval)
+
+    def _debug_collection_status(
+            self, timestamp, acquired_count, enabled_count, stream_status):
+        window = self.debug_window
+        if window is None or not window.winfo_exists():
+            return
+        self._append_debug_output(window, [
+            f"[{timestamp.astimezone().strftime('%H:%M:%S')}] "
+            f"Data stream: acquired {acquired_count}/{enabled_count} enabled sensors; "
+            f"{stream_status}"
+        ])
 
     def _update_tree_row(self, sensor_name, label, raw, calibrated, status, tag="ok"):
         try:

@@ -9,3 +9,9 @@ for inspection rather than declared faulty, since a constant sensor signal can b
 normal. The test probes the I2C bus and samples ADC inputs; it does not configure
 sensor inputs as GPIO outputs. Stop data collection before running diagnostics to
 avoid competing for the ADC bus.
+
+When MariaDB is the selected database, the Debug Console also checks the database
+connection and reports the number and timestamp of stored readings. While collection
+is running, it reports the number of enabled sensors sampled and the result of each
+MariaDB write batch. A zero sample count points to sensor acquisition or channel
+configuration; a write failure points to MariaDB connectivity, schema, or permissions.
