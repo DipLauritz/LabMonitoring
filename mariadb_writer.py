@@ -98,5 +98,16 @@ class MariaDBWriter:
         finally:
             cursor.close()
 
+    def get_stream_status(self):
+        """Return the stored reading count and timestamp of the newest reading."""
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(
+                "SELECT COUNT(*), MAX(recorded_at) FROM sensor_readings"
+            )
+            return cursor.fetchone()
+        finally:
+            cursor.close()
+
     def close(self):
         self.connection.close()
